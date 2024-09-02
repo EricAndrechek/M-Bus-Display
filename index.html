@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+        />
+
+        <!-- I set up sentry to make it easier to debug the errors that only happened on the Pi remotely. If you want to use this, put your key in the snippet below -->
+        <!-- <script
+            src="https://js.sentry-cdn.com/dskfjhsdajkfhdsjfhafkhdsfkjahsdf.min.js"
+            crossorigin="anonymous"
+        ></script> -->
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+        />
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                user-select: none;
+                background-color: black;
+            }
+
+            #bus-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                flex-wrap: wrap;
+                overflow: hidden;
+                height: 100vh;
+                background-color: black;
+            }
+
+            .bus-box {
+                width: 90%;
+                margin: 10px 5%;
+                padding: 20px;
+                background-color: #ffffff;
+                border-radius: 15px;
+                display: flex;
+                flex-direction: row;
+                justify-content: space-around;
+                align-items: center;
+                flex-wrap: wrap;
+                align-items: center;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                animation: slideUp 1s ease;
+                -webkit-transition: all 1s linear;
+                -moz-transition: all 1s linear;
+                -o-transition: all 1s linear;
+                transition: all 1s linear;
+                position: relative;
+
+                box-sizing: border-box;
+                border: 4px solid transparent;
+            }
+
+            .now {
+                background-color: #ff0000;
+            }
+
+            .two-minutes {
+                background-color: #ff9800;
+            }
+
+            .five-minutes {
+                background-color: #ffeb3b;
+            }
+
+            .ten-minutes {
+                background-color: #4caf50;
+            }
+
+            .default {
+                background-color: #2196f3;
+            }
+
+            .bus-left {
+                padding-top: 10px;
+                display: flex;
+                flex-direction: column;
+                padding-left: 5%;
+                justify-content: center;
+                flex-wrap: wrap;
+                width: 40%;
+            }
+
+            .bus-right {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+                padding-right: 5%;
+                justify-content: center;
+                flex-wrap: wrap;
+                width: 60%;
+            }
+
+            .bus-icon {
+                display: flex;
+                font-size: 2em;
+                margin-bottom: 10px;
+            }
+
+            .bus-number {
+                display: flex;
+                font-size: 1.2em;
+                margin-bottom: 5px;
+            }
+
+            .arrival-time {
+                font-size: 1.8em;
+                font-weight: bold;
+            }
+
+            .arrival-time.predicted {
+                font-size: 2.8em;
+                font-weight: bold;
+            }
+
+            .arrival-time.arrival {
+                font-size: 1.2em;
+                font-weight: bold;
+            }
+
+            .info-section {
+                display: flex;
+                flex-direction: row;
+                flex-wrap: wrap;
+                width: 90%;
+                margin-top: 10px;
+                justify-content: space-around;
+                align-items: center;
+                column-gap: 15px;
+            }
+
+            .info-item {
+                display: flex;
+                align-items: center;
+                margin-bottom: 5px;
+            }
+
+            .info-icon {
+                margin-right: 5px;
+            }
+
+            .delayed {
+                color: red;
+            }
+
+            .speed {
+                font-size: 1.2em;
+                margin-top: 5px;
+            }
+
+            .progress-border {
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                fill: transparent;
+                stroke: #4caf50; /* Set the color of your progress bar */
+                stroke-width: 4; /* Set the width of your progress bar */
+                stroke-dasharray: 0 10000; /* Set initial dash array with total length 10000 */
+                stroke-dashoffset: 0; /* Set initial dash offset */
+                transition: stroke-dasharray 0.3s ease; /* Add a transition effect */
+            }
+
+            .clock {
+                font-size: 4.8em;
+                font-weight: bold;
+                color: red;
+                background-color: black;
+            }
+
+            @keyframes slideUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div id="bus-container"></div>
+
+        <script>
+            function setProgress(percent, id) {
+                const progressBar = document.getElementById(
+                    `progress-border-${id}`
+                );
+                const totalLength = progressBar.getTotalLength();
+                const dashArray = percent * totalLength;
+
+                progressBar.style.strokeDasharray = `${dashArray} ${
+                    totalLength - dashArray
+                }`;
+            }
+
+            // Variables to keep track of taps
+            let tapCount = 0;
+            let lastTapTime = 0;
+
+            // Function to reload the page
+            function reloadPage() {
+                location.reload(true);
+            }
+
+            getNewBusData();
+
+            // To update UI with new data
+            let busUpdaterInterval = 5000;
+            let busUpdater = setInterval(() => {
+                getNewBusData();
+            }, busUpdaterInterval);
+
+            // Event listener for touchstart (for mobile devices)
+            document.addEventListener("touchstart", function (event) {
+                event.preventDefault(); // Prevent default touch behavior
+
+                const currentTime = new Date().getTime();
+                const timeSinceLastTap = currentTime - lastTapTime;
+
+                if (timeSinceLastTap < 500) {
+                    tapCount += 1;
+
+                    if (tapCount === 3) {
+                        reloadPage();
+                    }
+                } else {
+                    tapCount = 1;
+                }
+
+                lastTapTime = currentTime;
+            });
+
+            // Event listener for click (for other devices)
+            document.addEventListener("click", function () {
+                tapCount += 1;
+
+                if (tapCount === 3) {
+                    reloadPage();
+                }
+
+                // Reset tap count after 1 second
+                setTimeout(function () {
+                    tapCount = 0;
+                }, 1000);
+            });
+
+            function parseCapacity(capacity) {
+                let parsed_capacity = "";
+                switch (capacity) {
+                    case "FULL":
+                        parsed_capacity = "Full";
+                        break;
+                    case "EMPTY":
+                        parsed_capacity = "Empty";
+                        break;
+                    case "HALF_EMPTY":
+                        parsed_capacity = "Half Empty";
+                        break;
+                    case "HALF_FULL":
+                        parsed_capacity = "Half Full";
+                        break;
+                    case "N/A":
+                        parsed_capacity = "Unknown";
+                        break;
+                    default:
+                        parsed_capacity = "Unknown";
+                        break;
+                }
+                return parsed_capacity;
+            }
+
+            function updateBusUI(busData) {
+                const busContainer = document.getElementById("bus-container");
+
+                // Create a map to store references to existing bus boxes
+                const busMap = new Map();
+
+                // Iterate through existing bus boxes and store their references
+                busContainer.childNodes.forEach((node) => {
+                    if (node.classList.contains("bus-box")) {
+                        const vid = node.getAttribute("data-vid");
+                        busMap.set(vid, node);
+                    }
+                });
+
+                try {
+                    // Update or create bus boxes for each bus in the new data
+                    busData.forEach((bus) => {
+                        if (bus !== undefined && "vid" in bus) {
+                            const vid = bus.vid;
+                            const existingBusBox = busMap.get(vid);
+
+                            if (existingBusBox) {
+                                // Update existing bus box
+                                updateBusBox(existingBusBox, bus);
+                            } else {
+                                // Create new bus box
+                                createBusBox(busContainer, bus);
+                            }
+                        }
+                    });
+                } catch (error) {
+                    console.log(error);
+                }
+
+                // Remove bus boxes that are not in the new data
+                busMap.forEach((node, vid) => {
+                    if (!busData.some((bus) => bus.vid === vid)) {
+                        if (node.id !== "no-bus-message") {
+                            node.remove();
+                        } else {
+                            if (busData.length > 0) {
+                                node.remove();
+                            }
+                        }
+                    }
+                });
+
+                // If there are no buses, show a message
+                if (busData.length === 0) {
+                    // If there is already a message, don't add another one
+                    if (document.getElementById("no-bus-message")) {
+                        return;
+                    }
+
+                    const noBusMessage = document.createElement("div");
+                    noBusMessage.id = "no-bus-message";
+                    let prettyClock = new Date().toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "numeric",
+                        hour12: true,
+                    });
+                    noBusMessage.innerText = "No Arrival Times";
+                    noBusMessage.classList.add("bus-box");
+                    noBusMessage.classList.add("arrival-time");
+                    noBusMessage.id = "no-bus-message";
+                    busContainer.append(noBusMessage);
+                    return;
+                } else {
+                    // If there are buses, remove the message
+                    const noBusMessage =
+                        document.getElementById("no-bus-message");
+                    if (noBusMessage) {
+                        noBusMessage.remove();
+                    }
+                }
+            }
+
+            function createBusBox(container, bus) {
+                const busBox = document.createElement("div");
+                busBox.classList.add("bus-box");
+                busBox.setAttribute("data-vid", bus.vid);
+                busBox.id = `bus-box-${bus.vid}`;
+                busBox.style.order = bus.index + 1;
+
+                const progressBorder = document.createElement("div");
+                progressBorder.classList.add("progress-border");
+                progressBorder.id = `progress-border-${bus.vid}`;
+
+                const busLeft = document.createElement("div");
+                busLeft.classList.add("bus-left");
+
+                const iconHolder = document.createElement("span");
+                iconHolder.classList.add("icon-holder");
+
+                const busIcon = document.createElement("i");
+                busIcon.classList.add("fas", "fa-bus", "bus-icon");
+
+                const busNumber = document.createElement("div");
+                busNumber.innerText = `Bus #${bus.vid}`;
+                busNumber.classList.add("bus-number");
+
+                iconHolder.append(busIcon);
+                if (bus.vid == 3031) {
+                    iconHolder.append(busIcon.cloneNode(true));
+                }
+
+                busLeft.append(iconHolder);
+                busLeft.append(busNumber);
+
+                const busRight = document.createElement("div");
+                busRight.classList.add("bus-right");
+
+                const arrivalTime = document.createElement("div");
+                arrivalTime.innerText = `${bus.arrivalTime}`;
+                arrivalTime.classList.add("arrival-time", "arrival");
+
+                const arrivalTimeMinutes =
+                    parseInt(bus.predictedArrival.split(" ")[0]) || 0;
+                if (arrivalTimeMinutes == 0) {
+                    busBox.classList.add("now");
+                } else if (arrivalTimeMinutes <= 2) {
+                    busBox.classList.add("two-minutes");
+                } else if (arrivalTimeMinutes <= 5) {
+                    busBox.classList.add("five-minutes");
+                } else if (arrivalTimeMinutes <= 10) {
+                    busBox.classList.add("ten-minutes");
+                } else {
+                    busBox.classList.add("default");
+                }
+
+                const predictedArrival = document.createElement("div");
+                predictedArrival.innerText = `${bus.predictedArrival}`;
+                predictedArrival.classList.add("arrival-time", "predicted");
+
+                busRight.append(arrivalTime);
+                busRight.append(predictedArrival);
+
+                const infoSection = document.createElement("div");
+                infoSection.classList.add("info-section");
+
+                // Add other information here as needed
+                createInfoItem(
+                    infoSection,
+                    "Distance",
+                    bus.distance,
+                    "fas fa-map-marker-alt"
+                );
+                createInfoItem(
+                    infoSection,
+                    "Speed",
+                    `${bus.speed}`,
+                    "fas fa-tachometer-alt"
+                );
+                createInfoItem(
+                    infoSection,
+                    "Capacity",
+                    parseCapacity(bus.capacity),
+                    "fas fa-users"
+                );
+                createInfoItem(
+                    infoSection,
+                    "Delay",
+                    bus.delayed ? "Delayed" : "On Time",
+                    "fas fa-clock"
+                );
+
+                busBox.append(progressBorder);
+                busBox.append(busLeft);
+                busBox.append(busRight);
+                busBox.append(infoSection);
+                container.append(busBox);
+            }
+
+            function updateBusBox(busBox, bus) {
+                // Update existing bus box content
+
+                busBox.style.order = bus.index + 1;
+                const arrivalTime = busBox.querySelector(
+                    ".arrival-time.arrival"
+                );
+                arrivalTime.innerText = `${bus.arrivalTime}`;
+
+                // remove existing class
+                busBox.classList.remove("now");
+                busBox.classList.remove("two-minutes");
+                busBox.classList.remove("five-minutes");
+                busBox.classList.remove("ten-minutes");
+                busBox.classList.remove("default");
+
+                const arrivalTimeMinutes =
+                    parseInt(bus.predictedArrival.split(" ")[0]) || 0;
+                if (arrivalTimeMinutes == 0) {
+                    busBox.classList.add("now");
+                } else if (arrivalTimeMinutes <= 2) {
+                    busBox.classList.add("two-minutes");
+                } else if (arrivalTimeMinutes <= 5) {
+                    busBox.classList.add("five-minutes");
+                } else if (arrivalTimeMinutes <= 10) {
+                    busBox.classList.add("ten-minutes");
+                } else {
+                    busBox.classList.add("default");
+                }
+
+                const predictedArrival = busBox.querySelector(
+                    ".arrival-time.predicted"
+                );
+                predictedArrival.innerText = `${bus.predictedArrival}`;
+
+                // Update other information here as needed
+                updateInfoItem(busBox, "Distance", bus.distance);
+
+                // if no speed update, don't replace w/ bad one for now vid
+                // if no speed update and there is a capacity update,
+                // it means we do have bus data, just not speed,
+                // so we can assume speed is 0
+                if (bus.speed !== "? mph") {
+                    updateInfoItem(busBox, "Speed", `${bus.speed}`);
+                } else if (bus.capacity !== "?") {
+                    updateInfoItem(busBox, "Speed", `0 mph`);
+                }
+
+                updateInfoItem(busBox, "Capacity", parseCapacity(bus.capacity));
+
+                updateInfoItem(
+                    busBox,
+                    "Delay",
+                    bus.delayed ? "Delayed" : "On Time"
+                );
+            }
+
+            function createInfoItem(parent, label, value, iconClass) {
+                const infoItem = document.createElement("div");
+                infoItem.className = "info-item";
+                infoItem.id = `info-item-${label}`;
+                infoItem.ariaLabel = label;
+
+                const infoIcon = document.createElement("i");
+                infoIcon.className = `info-icon ${iconClass}`;
+
+                const infoText = document.createElement("div");
+                infoText.innerHTML = `${value}`;
+
+                infoItem.append(infoIcon);
+                infoItem.append(infoText);
+                parent.append(infoItem);
+            }
+
+            function updateInfoItem(parent, label, value) {
+                const infoText = parent.querySelector(
+                    `#info-item-${label} > div`
+                );
+                if (infoText) {
+                    infoText.innerHTML = `${value}`;
+                }
+            }
+
+            function getNewBusData() {
+                // first check if we should even query the api
+                let currentTime = new Date();
+                let currentHour = currentTime.getHours();
+                if (currentHour >= 3 && currentHour < 7) {
+                    // update no bus message to show clock
+                    // and update clock every second
+
+                    // check if no bus message exists
+                    if (!document.getElementById("no-bus-message")) {
+                        // create no bus message
+                        const noBusMessage = document.createElement("div");
+                        noBusMessage.id = "no-bus-message";
+                        let prettyClock = new Date().toLocaleTimeString(
+                            "en-US",
+                            {
+                                hour: "numeric",
+                                minute: "numeric",
+                                hour12: true,
+                            }
+                        );
+                        noBusMessage.innerText = prettyClock;
+                        noBusMessage.classList.add("bus-box");
+                        noBusMessage.classList.add("arrival-time");
+                        noBusMessage.classList.add("clock");
+                        noBusMessage.id = "no-bus-message";
+                        const busContainer =
+                            document.getElementById("bus-container");
+                        busContainer.append(noBusMessage);
+                    } else {
+                        let clock = document.getElementById("no-bus-message");
+                        // check if classlist has clock
+                        if (!clock.classList.contains("clock")) {
+                            clock.classList.add("clock");
+                        }
+                        clock.innerText = currentTime.toLocaleTimeString(
+                            "en-US",
+                            {
+                                hour: "numeric",
+                                minute: "numeric",
+                                hour12: true,
+                            }
+                        );
+                    }
+                } else {
+                    // Get bus data from the server
+                    return fetch(
+                        "https://fadksjflaksfjalksdfjsakldfjsldkfj.lambda-url.us-east-2.on.aws/"
+                    )
+                        .then((response) => response.json())
+                        .then((data) => {
+                            updateBusUI(data);
+                        });
+                }
+            }
+        </script>
+
+        <script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    </body>
+</html>
